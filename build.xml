@@ -31,13 +31,18 @@
     <!-- Create the distribution directory -->
     <mkdir dir="${dist}/lib"/>
     <mkdir dir="${build}/lib"/>
+      <mkdir dir="${dist}/data"/>
+      <mkdir dir="${build}/data"/>
     <!-- Put everything in ${build}/lib into the lib/ dir of build -->
     <copy todir="${build}/lib">
       <fileset dir="lib" includes="*.jar" />
     </copy>
+    <copy todir="${build}/data">
+      <fileset dir="data" includes="*.json" />
+    </copy>
      
     <jar jarfile="${dist}/lib/TitleHarvester.jar" basedir="${build}">
-      <zipfileset includes="**/*.class" src="lib/jsoup-1.6.1.jar"/>
+      <zipfileset includes="**/*.class **/*.json" src="lib/jsoup-1.6.1.jar"/>
     </jar> 
   </target>
 
