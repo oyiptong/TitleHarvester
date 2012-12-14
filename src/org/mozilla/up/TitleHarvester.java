@@ -1,5 +1,8 @@
 package org.mozilla.up;
 
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
@@ -17,11 +20,18 @@ import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.URI;
+import com.google.common.net.InternetDomainName;
+
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.apache.hadoop.util.Tool;
-
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
 
 /**
  * Created with IntelliJ IDEA.
@@ -68,11 +78,33 @@ public class TitleHarvester extends Configured implements Tool
     {
         // represent ruleset for blekko data, including regular expression
 
-        public void map(Text url, Text metadataText, OutputCollector<Text, Text> collector, Reporter reporter) throws IOException
+        private static Map<String, ArrayList<String>> domainCategories;
+        private static Joiner joiner = Joiner.on(',').skipNulls();
+        private static Pattern wwwPattern = Pattern.compile("www\\w*");
+
+        private void setupCategories()
         {
-           // output {url: category} and {url: title}
+            try
+            {
+                ObjectMapper mapper = new ObjectMapper();
+                domainCategories = mapper.readValue(getClass().getResourceAsStream("/data/domain_cat_index.json"), new TypeReference<Map<String, ArrayList<String>>>(){});
+            } catch(IOException e)
+            {
+                //TODO: log this?
+            }
+        }
+
+        public void configure(JobConf job) {
+            super.configure(job);
+            setupCategories();
+        }
+
+        private String getTitle(String metadata) throws IOException
+        {
+            /* parse json metadata and obtain title */
+
             JsonFactory f = new JsonFactory();
-            JsonParser p = f.createJsonParser(metadataText.toString());
+            JsonParser p = f.createJsonParser(metadata);
 
             // get rid of START_OBJECT
             p.nextToken();
@@ -82,21 +114,18 @@ public class TitleHarvester extends Configured implements Tool
 
             while (p.nextToken() != JsonToken.END_OBJECT)
             {
-                String namefield = p.getCurrentName();
+                String nameField = p.getCurrentName();
                 JsonToken token = p.nextToken(); // move to value
 
-                if (namefield != null && namefield.equals("http_result"))
+                if (nameField != null && nameField.equals("http_result"))
                 {
                     statusCode = p.getIntValue();
                     if (statusCode < 200 || statusCode >= 300)
                     {
-                        break;
+                        return null;
                     }
-                }
-                else if (token == JsonToken.START_OBJECT)
+                } else if (token == JsonToken.START_OBJECT)
                 {
-                    String objName = p.getCurrentName();
-
                     while (p.nextToken() != JsonToken.END_OBJECT)
                     {
                         String subObjName = p.getCurrentName();
@@ -105,20 +134,21 @@ public class TitleHarvester extends Configured implements Tool
                             while (p.nextToken() != JsonToken.END_ARRAY) {
                                 // do nothing
                             }
-                        }
-                        else if (subObjName != null &&  namefield.equals("content"))
+                        } else if (subObjName != null &&  nameField.equals("content"))
                         {
                             if (subObjName.equals("title"))
                             {
                                 p.nextToken();
                                 title = p.getText();
-                            }
-                            else if (subObjName.equals("type"))
+                            } else if (subObjName.equals("type"))
                             {
                                 p.nextToken();
                                 if (p.getText().equals("html-doc"))
                                 {
                                     htmlDoc = true;
+                                } else
+                                {
+                                    return null;
                                 }
                             }
 
@@ -127,8 +157,95 @@ public class TitleHarvester extends Configured implements Tool
                 }
                 if (statusCode > -1 && title != null && htmlDoc)
                 {
-                    collector.collect(url, new Text("title:"+title));
-                    break;
+                    return title.replaceAll("\\s+", " ").trim();
+                }
+            }
+            return null;
+        }
+
+        private ArrayList<String> getCategories(String url)
+        {
+            /*
+                Obtain categories for the given url.
+
+                This version only checks if the hostname is found in the domain map.
+                Later versions will also look for path prefixes and wildcards
+             */
+            try
+            {
+                URL uri = new URL(url.toLowerCase());
+                String hostName = uri.getHost();
+                InternetDomainName domainName = InternetDomainName.from(uri.getHost());
+                String domainStr = domainName.topPrivateDomain().name();
+
+                if (!hostName.equals(domainStr))
+                {
+                    int domainIndex = hostName.indexOf(domainStr);
+                    try
+                    {
+                        String subDomains = hostName.substring(0, domainIndex-1);
+                        if (wwwPattern.matcher(subDomains).matches())
+                        {
+                            hostName = domainStr;
+                        }
+                    } catch (StringIndexOutOfBoundsException e)
+                    {
+                        // for when the hostName is longer than the domainStr
+                        System.out.println(String.format("StringIndexOutOfBoundsException hostname:%1$s domainStr:%2$s %3$s", hostName, domainStr, url));
+                    }
+                }
+
+                if (domainCategories.containsKey(hostName))
+                {
+                    return domainCategories.get(hostName);
+                } else
+                {
+                    //TODO: log this and/or collect stats
+                }
+
+            } catch (MalformedURLException e)
+            {
+                //TODO: log this and/or collect stats
+                System.out.println("URISyntaxException " + url);
+                return null;
+            } catch (IllegalArgumentException e)
+            {
+                //TODO: in case this is an IP address. log and collect stats
+                System.out.println("IllegalArgumentException " + url);
+                return null;
+            } catch (NullPointerException e)
+            {
+                //Error reading uri.getHost()
+                System.out.println("NullPointerException " + url);
+                return null;
+            } catch(IllegalStateException e)
+            {
+                // Not under public suffix
+                System.out.println("IllegalStateException " + url);
+                return null;
+            }
+            return null;
+        }
+
+        public void map(Text url, Text metadataText, OutputCollector<Text, Text> collector, Reporter reporter) throws IOException
+        {
+           // output {url: category} and {url: title}
+
+            /*
+                Find if metadata should be parsed, based on the url.
+                The url should:
+                    a) be found in the list
+                    b) have at least one category classification
+             */
+
+            ArrayList<String> categories = getCategories(url.toString());
+
+            if (categories != null) {
+                String title = getTitle(metadataText.toString());
+                if (title != null)
+                {
+                    collector.collect(url, new Text("title:" + title));
+                    collector.collect(url, new Text("categories:" + joiner.join(categories)));
                 }
             }
         }
@@ -136,19 +253,33 @@ public class TitleHarvester extends Configured implements Tool
 
     public static class TitleHarvestReducer extends MapReduceBase implements Reducer<Text, Text, Text, Text>
     {
+        private static Splitter splitter = Splitter.on(':').trimResults().limit(2);
+
         public void reduce(Text url, Iterator<Text> values, OutputCollector<Text, Text> collector, Reporter reporter) throws IOException
         {
-            // write the two key/value pairs
-           while (values.hasNext())
-           {
-               String value = values.next().toString();
+            String title = null;
+            String categories = null;
 
-               int sepIndex = value.indexOf(":");
-               String type = value.substring(0, sepIndex);
-               String data = value.substring(sepIndex+1);
+            while (values.hasNext())
+            {
+                String value = values.next().toString();
 
-               collector.collect(url, new Text(data));
-           }
+                ArrayList<String> splitValues = Lists.newArrayList(splitter.split(value));
+                String dataType = splitValues.get(0);
+                String data = splitValues.get(1);
+
+                if (dataType.equals("title"))
+                {
+                    title = data;
+                } else if (dataType.equals("categories"))
+                {
+                    categories = data;
+                }
+            }
+            if (title != null && categories != null)
+            {
+                collector.collect(url, new Text(String.format("%1$s\t%2$s", title, categories)));
+            }
         }
     }
 
@@ -189,12 +320,6 @@ public class TitleHarvester extends Configured implements Tool
             FileInputFormat.addInputPath(conf, new Path(segmentPath));
             line = br.readLine();
         }
-
-        /*
-        CSVOutputFormat.setOutputPath(conf, new Path(args[1]));
-        CSVOutputFormat.setCompressOutput(conf, false);
-        conf.setOutputFormat(CSVOutputFormat.class);
-        */
 
         FileOutputFormat.setOutputPath(conf, new Path(args[1]));
 
