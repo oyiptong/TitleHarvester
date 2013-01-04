@@ -3,21 +3,23 @@ package org.mozilla.up;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
-import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapred.*;
-import org.apache.hadoop.record.CsvRecordOutput;
-import org.apache.hadoop.util.Progressable;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.SequenceFileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.ToolRunner;
 import org.codehaus.jackson.JsonFactory;
 import org.codehaus.jackson.JsonParser;
 import org.codehaus.jackson.JsonToken;
 
 import java.io.BufferedReader;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import com.google.common.net.InternetDomainName;
@@ -25,7 +27,6 @@ import com.google.common.net.InternetDomainName;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -41,40 +42,8 @@ import org.codehaus.jackson.type.TypeReference;
  */
 public class TitleHarvester extends Configured implements Tool
 {
-    public static class CSVOutputFormat extends TextOutputFormat<Text, Text>
-    {
-        public RecordWriter<Text, Text> getRecordWriter(FileSystem ignored, JobConf job, String name, Progressable progress) throws IOException
-        {
-            Path file = FileOutputFormat.getTaskOutputPath(job, name);
-            FileSystem fs = file.getFileSystem(job);
-            FSDataOutputStream fileOut = fs.create(file, progress);
-            return new CSVRecordWriter(fileOut);
-        }
 
-        protected static class CSVRecordWriter implements RecordWriter<Text, Text>
-        {
-            protected DataOutputStream outStream;
-
-            public CSVRecordWriter(DataOutputStream out)
-            {
-                this.outStream = out;
-            }
-
-            public synchronized void write(Text key, Text value) throws IOException
-            {
-                CsvRecordOutput csvOutput = new CsvRecordOutput(outStream);
-                csvOutput.writeString(key.toString(), "url");
-                csvOutput.writeString(value.toString(), "title");
-            }
-
-            public synchronized void close(Reporter reporter) throws IOException
-            {
-                outStream.close();
-            }
-        }
-    }
-
-    public static class TitleHarvestMapper extends MapReduceBase implements Mapper<Text, Text, Text, Text>
+    public static class TitleHarvestMapper extends Mapper<Text, Text, Text, Text>
     {
         // represent ruleset for blekko data, including regular expression
 
@@ -94,8 +63,9 @@ public class TitleHarvester extends Configured implements Tool
             }
         }
 
-        public void configure(JobConf job) {
-            super.configure(job);
+        @Override
+        protected void setup(Context context) throws InterruptedException, IOException {
+            super.setup(context);
             setupCategories();
         }
 
@@ -227,7 +197,8 @@ public class TitleHarvester extends Configured implements Tool
             return null;
         }
 
-        public void map(Text url, Text metadataText, OutputCollector<Text, Text> collector, Reporter reporter) throws IOException
+        @Override
+        public void map(Text url, Text metadataText, Context context) throws InterruptedException, IOException
         {
            // output {url: category} and {url: title}
 
@@ -244,27 +215,28 @@ public class TitleHarvester extends Configured implements Tool
                 String title = getTitle(metadataText.toString());
                 if (title != null)
                 {
-                    collector.collect(url, new Text("title:" + title));
-                    collector.collect(url, new Text("categories:" + joiner.join(categories)));
+                    context.write(url, new Text("title:" + title));
+                    context.write(url, new Text("categories:" + joiner.join(categories)));
                 }
             }
         }
     }
 
-    public static class TitleHarvestReducer extends MapReduceBase implements Reducer<Text, Text, Text, Text>
+    public static class TitleHarvestReducer extends Reducer<Text, Text, Text, Text>
     {
         private static Splitter splitter = Splitter.on(':').trimResults().limit(2);
 
-        public void reduce(Text url, Iterator<Text> values, OutputCollector<Text, Text> collector, Reporter reporter) throws IOException
+        @Override
+        public void reduce(Text url, Iterable<Text> values, Context context) throws InterruptedException, IOException
         {
             String title = null;
             String categories = null;
 
-            while (values.hasNext())
+            for (Text value : values)
             {
-                String value = values.next().toString();
+                String valueStr = value.toString();
 
-                ArrayList<String> splitValues = Lists.newArrayList(splitter.split(value));
+                ArrayList<String> splitValues = Lists.newArrayList(splitter.split(valueStr));
                 String dataType = splitValues.get(0);
                 String data = splitValues.get(1);
 
@@ -278,64 +250,82 @@ public class TitleHarvester extends Configured implements Tool
             }
             if (title != null && categories != null)
             {
-                collector.collect(url, new Text(String.format("%1$s\t%2$s", title, categories)));
+                context.write(url, new Text(String.format("%1$s\t%2$s", title, categories)));
             }
         }
     }
 
     public static void main(String[] args) throws Exception
     {
-        ToolRunner.run(new TitleHarvester(), args);
+        int res = ToolRunner.run(new Configuration(), new TitleHarvester(), args);
+        System.exit(res);
     }
 
     public int run(String[] args) throws Exception
     {
         // Creates a new job configuration for this Hadoop job.
+        if (args.length < 2)
+        {
 
-        JobConf conf = new JobConf(getConf(), getClass());
-        conf.setJobName(getClass().getName());
+            System.err.printf("Usage: %s [generic options] <segment_file_path> <output_path>\n", getClass().getSimpleName());
 
-        conf.setMapOutputKeyClass(Text.class);
-        conf.setMapOutputValueClass(Text.class);
-        conf.setOutputKeyClass(Text.class);
-        conf.setOutputValueClass(Text.class);
+            ToolRunner.printGenericCommandUsage(System.err);
 
-        conf.setMapperClass(TitleHarvestMapper.class);
-        conf.setReducerClass(TitleHarvestReducer.class);
-        conf.setNumReduceTasks(10);
+            return -1;
 
-        conf.setInputFormat(SequenceFileInputFormat.class);
-        FileSystem fs = FileSystem.get(conf);
+        }
+
+        Job job = new Job(getConf());
+
+        // Tells Hadoop mappers and reducers to pull dependent libraries from
+        // those bundled into this JAR.
+        job.setJarByClass(getClass());
+
+        job.setJobName(getClass().getName());
+
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(Text.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(Text.class);
+
+        job.setMapperClass(TitleHarvestMapper.class);
+        job.setReducerClass(TitleHarvestReducer.class);
+        //job.setNumReduceTasks(10);
+
+        job.setInputFormatClass(SequenceFileInputFormat.class);
 
         // read from list of valid segment files
         String segmentList = args[0];
-        BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(new Path(segmentList))));
-        String line;
-        line = br.readLine();
+
+        // if segment list url is on s3, assume input is on s3
+        String pathPrefix = "";
+        if (segmentList.startsWith("s3n://"))
+        {
+            pathPrefix = "s3n:/";
+        }
+
+        Path path = new Path(segmentList);
+        FileSystem fs = path.getFileSystem(job.getConfiguration()); // get FS appropriate for input type
+        BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(path)));
+        String line = br.readLine();
+
         while (line != null)
         {
-            String segmentPath = String.format("/aws-publicdatasets/common-crawl/parse-output/segment/%1$s/metadata-*", line);
+            String segmentPath = String.format("%1$s/aws-publicdatasets/common-crawl/parse-output/segment/%2$s/metadata-*", pathPrefix, line);
             System.out.println(String.format("Adding file at: %1$s", segmentPath));
 
-            FileInputFormat.addInputPath(conf, new Path(segmentPath));
+            FileInputFormat.addInputPath(job, new Path(segmentPath));
             line = br.readLine();
         }
 
-        FileOutputFormat.setOutputPath(conf, new Path(args[1]));
+        FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
         // Allows some (50%) of tasks fail; we might encounter the
         // occasional troublesome set of records and skipping a few
         // of 1000s won't hurt counts too much.
-        conf.set("mapred.max.map.failures.percent", "50");
-
-
-        // Tells Hadoop mappers and reducers to pull dependent libraries from
-        // those bundled into this JAR.
-        conf.setJarByClass(TitleHarvester.class);
+        job.getConfiguration().set("mapred.max.map.failures.percent", "50");
 
         // Runs the job.
-        JobClient.runJob(conf);
-
-        return 0;
+        return job.waitForCompletion(true) ? 0 : 1;
     }
 }
