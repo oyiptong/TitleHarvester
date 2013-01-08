@@ -42,6 +42,19 @@ import org.codehaus.jackson.type.TypeReference;
  */
 public class TitleHarvester extends Configured implements Tool
 {
+    enum Stats {
+        ERR_URI_MALFORMED,
+        ERR_URI_ILLEGAL,
+        ERR_URI_PARSE,
+        ERR_URI_NO_SUFFIX,
+        ERROR,
+        SUCCESS,
+        NO_CATEGORY,
+        NO_TITLE,
+        PAGE_NOT_HTML,
+        HTTP_NON_200,
+        IMPOSSIBLE
+    }
 
     public static class TitleHarvestMapper extends Mapper<Text, Text, Text, Text>
     {
@@ -69,7 +82,7 @@ public class TitleHarvester extends Configured implements Tool
             setupCategories();
         }
 
-        private String getTitle(String metadata) throws IOException
+        private String getTitle(String metadata, Context context) throws IOException
         {
             /* parse json metadata and obtain title */
 
@@ -92,6 +105,7 @@ public class TitleHarvester extends Configured implements Tool
                     statusCode = p.getIntValue();
                     if (statusCode < 200 || statusCode >= 300)
                     {
+                        context.getCounter(Stats.HTTP_NON_200).increment(1);
                         return null;
                     }
                 } else if (token == JsonToken.START_OBJECT)
@@ -109,7 +123,8 @@ public class TitleHarvester extends Configured implements Tool
                             if (subObjName.equals("title"))
                             {
                                 p.nextToken();
-                                title = p.getText();
+                                title = p.getText().replaceAll("\\s+", " ").trim();
+
                             } else if (subObjName.equals("type"))
                             {
                                 p.nextToken();
@@ -118,6 +133,7 @@ public class TitleHarvester extends Configured implements Tool
                                     htmlDoc = true;
                                 } else
                                 {
+                                    context.getCounter(Stats.PAGE_NOT_HTML).increment(1);
                                     return null;
                                 }
                             }
@@ -125,15 +141,24 @@ public class TitleHarvester extends Configured implements Tool
                         }
                     }
                 }
-                if (statusCode > -1 && title != null && htmlDoc)
+                if (statusCode > -1 || !htmlDoc)
                 {
-                    return title.replaceAll("\\s+", " ").trim();
+                    context.getCounter(Stats.IMPOSSIBLE).increment(1);
+
+                } else if (title == null || title == "")
+                {
+                    context.getCounter(Stats.NO_TITLE).increment(1);
+
+                } else
+                {
+                    return title;
+
                 }
             }
             return null;
         }
 
-        private ArrayList<String> getCategories(String url)
+        private ArrayList<String> getCategories(String url, Context context)
         {
             /*
                 Obtain categories for the given url.
@@ -160,8 +185,10 @@ public class TitleHarvester extends Configured implements Tool
                         }
                     } catch (StringIndexOutOfBoundsException e)
                     {
-                        // for when the hostName is longer than the domainStr
-                        System.out.println(String.format("StringIndexOutOfBoundsException hostname:%1$s domainStr:%2$s %3$s", hostName, domainStr, url));
+                        // hostName is longer than the domainStr. should never happen
+                        context.getCounter(Stats.IMPOSSIBLE).increment(1);
+                        context.getCounter(Stats.ERROR).increment(1);
+                        return null;
                     }
                 }
 
@@ -170,28 +197,36 @@ public class TitleHarvester extends Configured implements Tool
                     return domainCategories.get(hostName);
                 } else
                 {
-                    //TODO: log this and/or collect stats
+                    // no category match for this url
+                    context.getCounter(Stats.NO_CATEGORY).increment(1);
                 }
 
             } catch (MalformedURLException e)
             {
-                //TODO: log this and/or collect stats
-                System.out.println("URISyntaxException " + url);
+                // java.net url parser gives up
+                context.getCounter(Stats.ERR_URI_MALFORMED).increment(1);
+                context.getCounter(Stats.ERROR).increment(1);
                 return null;
+
             } catch (IllegalArgumentException e)
             {
-                //TODO: in case this is an IP address. log and collect stats
-                System.out.println("IllegalArgumentException " + url);
+                //this is an IP address or an illegal URL e.g. parts starting or ending with _ or -
+                context.getCounter(Stats.ERR_URI_ILLEGAL).increment(1);
+                context.getCounter(Stats.ERROR).increment(1);
                 return null;
+
             } catch (NullPointerException e)
             {
                 //Error reading uri.getHost()
-                System.out.println("NullPointerException " + url);
+                context.getCounter(Stats.ERR_URI_PARSE).increment(1);
+                context.getCounter(Stats.ERROR).increment(1);
                 return null;
+
             } catch(IllegalStateException e)
             {
                 // Not under public suffix
-                System.out.println("IllegalStateException " + url);
+                context.getCounter(Stats.ERR_URI_NO_SUFFIX).increment(1);
+                context.getCounter(Stats.ERROR).increment(1);
                 return null;
             }
             return null;
@@ -209,10 +244,10 @@ public class TitleHarvester extends Configured implements Tool
                     b) have at least one category classification
              */
 
-            ArrayList<String> categories = getCategories(url.toString());
+            ArrayList<String> categories = getCategories(url.toString(), context);
 
             if (categories != null) {
-                String title = getTitle(metadataText.toString());
+                String title = getTitle(metadataText.toString(), context);
                 if (title != null)
                 {
                     context.write(url, new Text("title:" + title));
@@ -251,6 +286,17 @@ public class TitleHarvester extends Configured implements Tool
             if (title != null && categories != null)
             {
                 context.write(url, new Text(String.format("%1$s\t%2$s", title, categories)));
+                context.getCounter(Stats.SUCCESS).increment(1);
+
+                int numCategories = 1;
+                for (int i=0; i < categories.length(); i++)
+                {
+                    if (categories.charAt(i) == ',')
+                    {
+                        numCategories += 1;
+                    }
+                }
+                context.getCounter("NumCategories", Integer.toString(numCategories)).increment(1);
             }
         }
     }
