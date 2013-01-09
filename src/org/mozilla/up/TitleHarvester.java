@@ -42,18 +42,17 @@ import org.codehaus.jackson.type.TypeReference;
  */
 public class TitleHarvester extends Configured implements Tool
 {
-    enum Stats {
+    enum ParseStats
+    {
+        ERR_SETUP,
         ERR_URI_MALFORMED,
         ERR_URI_ILLEGAL,
         ERR_URI_PARSE,
         ERR_URI_NO_SUFFIX,
-        ERROR,
         SUCCESS,
-        NO_CATEGORY,
-        NO_TITLE,
-        PAGE_NOT_HTML,
-        HTTP_NON_200,
-        IMPOSSIBLE
+        PAGE_NO_CATEGORY,
+        PAGE_NO_TITLE,
+        DATA_NO_JSON,
     }
 
     public static class TitleHarvestMapper extends Mapper<Text, Text, Text, Text>
@@ -64,7 +63,7 @@ public class TitleHarvester extends Configured implements Tool
         private static Joiner joiner = Joiner.on(',').skipNulls();
         private static Pattern wwwPattern = Pattern.compile("www\\w*");
 
-        private void setupCategories()
+        private void setupCategories(Context context) throws IOException
         {
             try
             {
@@ -72,19 +71,26 @@ public class TitleHarvester extends Configured implements Tool
                 domainCategories = mapper.readValue(getClass().getResourceAsStream("/data/domain_cat_index.json"), new TypeReference<Map<String, ArrayList<String>>>(){});
             } catch(IOException e)
             {
-                //TODO: log this?
+                context.getCounter(ParseStats.ERR_SETUP).increment(1);
+                throw e;
             }
         }
 
         @Override
         protected void setup(Context context) throws InterruptedException, IOException {
             super.setup(context);
-            setupCategories();
+            setupCategories(context);
         }
 
         private String getTitle(String metadata, Context context) throws IOException
         {
             /* parse json metadata and obtain title */
+
+            if (metadata == null || metadata.trim() == "")
+            {
+                context.getCounter(ParseStats.DATA_NO_JSON).increment(1);
+                return null;
+            }
 
             JsonFactory f = new JsonFactory();
             JsonParser p = f.createJsonParser(metadata);
@@ -103,11 +109,13 @@ public class TitleHarvester extends Configured implements Tool
                 if (nameField != null && nameField.equals("http_result"))
                 {
                     statusCode = p.getIntValue();
+                    context.getCounter("HTTP_STATUS", Integer.toString(statusCode)).increment(1);
+
                     if (statusCode < 200 || statusCode >= 300)
                     {
-                        context.getCounter(Stats.HTTP_NON_200).increment(1);
                         return null;
                     }
+
                 } else if (token == JsonToken.START_OBJECT)
                 {
                     while (p.nextToken() != JsonToken.END_OBJECT)
@@ -128,12 +136,15 @@ public class TitleHarvester extends Configured implements Tool
                             } else if (subObjName.equals("type"))
                             {
                                 p.nextToken();
-                                if (p.getText().equals("html-doc"))
+                                String pageType = p.getText();
+                                context.getCounter("DATA_PAGE_TYPE", pageType).increment(1);
+
+                                if (pageType.equals("html-doc"))
                                 {
                                     htmlDoc = true;
+
                                 } else
                                 {
-                                    context.getCounter(Stats.PAGE_NOT_HTML).increment(1);
                                     return null;
                                 }
                             }
@@ -141,13 +152,17 @@ public class TitleHarvester extends Configured implements Tool
                         }
                     }
                 }
-                if (statusCode > -1 || !htmlDoc)
+                if (statusCode == -1)
                 {
-                    context.getCounter(Stats.IMPOSSIBLE).increment(1);
+                    context.getCounter("HTTP_STATUS", "undefined").increment(1);
+
+                } else if (!htmlDoc)
+                {
+                    context.getCounter("DATA_PAGE_TYPE", "undefined").increment(1);
 
                 } else if (title == null || title == "")
                 {
-                    context.getCounter(Stats.NO_TITLE).increment(1);
+                    context.getCounter(ParseStats.PAGE_NO_TITLE).increment(1);
 
                 } else
                 {
@@ -176,18 +191,26 @@ public class TitleHarvester extends Configured implements Tool
                 if (!hostName.equals(domainStr))
                 {
                     int domainIndex = hostName.indexOf(domainStr);
-                    try
+
+                    if (domainIndex > 1)
                     {
-                        String subDomains = hostName.substring(0, domainIndex-1);
-                        if (wwwPattern.matcher(subDomains).matches())
+                        try
                         {
-                            hostName = domainStr;
+                            String subDomains = hostName.substring(0, domainIndex-1);
+                            if (wwwPattern.matcher(subDomains).matches())
+                            {
+                                hostName = domainStr;
+                            }
+                        } catch (StringIndexOutOfBoundsException e)
+                        {
+                            // erroneous url
+                            context.getCounter(ParseStats.ERR_URI_MALFORMED).increment(1);
+                            return null;
                         }
-                    } catch (StringIndexOutOfBoundsException e)
+                    } else
                     {
-                        // hostName is longer than the domainStr. should never happen
-                        context.getCounter(Stats.IMPOSSIBLE).increment(1);
-                        context.getCounter(Stats.ERROR).increment(1);
+                        // url probably wrong
+                        context.getCounter(ParseStats.ERR_URI_MALFORMED).increment(1);
                         return null;
                     }
                 }
@@ -198,35 +221,31 @@ public class TitleHarvester extends Configured implements Tool
                 } else
                 {
                     // no category match for this url
-                    context.getCounter(Stats.NO_CATEGORY).increment(1);
+                    context.getCounter(ParseStats.PAGE_NO_CATEGORY).increment(1);
                 }
 
             } catch (MalformedURLException e)
             {
                 // java.net url parser gives up
-                context.getCounter(Stats.ERR_URI_MALFORMED).increment(1);
-                context.getCounter(Stats.ERROR).increment(1);
+                context.getCounter(ParseStats.ERR_URI_MALFORMED).increment(1);
                 return null;
 
             } catch (IllegalArgumentException e)
             {
                 //this is an IP address or an illegal URL e.g. parts starting or ending with _ or -
-                context.getCounter(Stats.ERR_URI_ILLEGAL).increment(1);
-                context.getCounter(Stats.ERROR).increment(1);
+                context.getCounter(ParseStats.ERR_URI_ILLEGAL).increment(1);
                 return null;
 
             } catch (NullPointerException e)
             {
                 //Error reading uri.getHost()
-                context.getCounter(Stats.ERR_URI_PARSE).increment(1);
-                context.getCounter(Stats.ERROR).increment(1);
+                context.getCounter(ParseStats.ERR_URI_PARSE).increment(1);
                 return null;
 
             } catch(IllegalStateException e)
             {
                 // Not under public suffix
-                context.getCounter(Stats.ERR_URI_NO_SUFFIX).increment(1);
-                context.getCounter(Stats.ERROR).increment(1);
+                context.getCounter(ParseStats.ERR_URI_NO_SUFFIX).increment(1);
                 return null;
             }
             return null;
@@ -250,8 +269,8 @@ public class TitleHarvester extends Configured implements Tool
                 String title = getTitle(metadataText.toString(), context);
                 if (title != null)
                 {
-                    context.write(url, new Text("title:" + title));
-                    context.write(url, new Text("categories:" + joiner.join(categories)));
+                    context.write(url, new Text(String.format("%1$s\n%2$s", title, joiner.join(categories))));
+                    context.getCounter(ParseStats.SUCCESS).increment(1);
                 }
             }
         }
@@ -259,45 +278,43 @@ public class TitleHarvester extends Configured implements Tool
 
     public static class TitleHarvestReducer extends Reducer<Text, Text, Text, Text>
     {
-        private static Splitter splitter = Splitter.on(':').trimResults().limit(2);
+        private static Splitter splitter = Splitter.on('\n').trimResults().limit(2);
 
         @Override
         public void reduce(Text url, Iterable<Text> values, Context context) throws InterruptedException, IOException
         {
-            String title = null;
-            String categories = null;
+            int urlOccurrence = 0;
 
             for (Text value : values)
             {
                 String valueStr = value.toString();
 
                 ArrayList<String> splitValues = Lists.newArrayList(splitter.split(valueStr));
-                String dataType = splitValues.get(0);
-                String data = splitValues.get(1);
+                String title = splitValues.get(0);
+                String categories = splitValues.get(1);
 
-                if (dataType.equals("title"))
-                {
-                    title = data;
-                } else if (dataType.equals("categories"))
-                {
-                    categories = data;
-                }
-            }
-            if (title != null && categories != null)
-            {
                 context.write(url, new Text(String.format("%1$s\t%2$s", title, categories)));
-                context.getCounter(Stats.SUCCESS).increment(1);
+                context.getCounter(ParseStats.SUCCESS).increment(1);
 
-                int numCategories = 1;
-                for (int i=0; i < categories.length(); i++)
-                {
-                    if (categories.charAt(i) == ',')
-                    {
-                        numCategories += 1;
-                    }
-                }
-                context.getCounter("NumCategories", Integer.toString(numCategories)).increment(1);
+                countCategories(context, categories);
+
+                urlOccurrence += 1;
             }
+
+            context.getCounter("URL_OCCURRENCE", Integer.toString(urlOccurrence)).increment(1);
+        }
+
+        private void countCategories(Context context, String categories)
+        {
+            int numCategories = 1;
+            for (int i=0; i < categories.length(); i++)
+            {
+                if (categories.charAt(i) == ',')
+                {
+                    numCategories += 1;
+                }
+            }
+            context.getCounter("URL_NUM_CATEGORIES", Integer.toString(numCategories)).increment(1);
         }
     }
 
