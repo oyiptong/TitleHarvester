@@ -371,7 +371,7 @@ public class TitleHarvester extends Configured implements Tool
 
         // Compress the intermediate results from the map tasks
         conf.set("mapred.compress.map.output", "true");
-        conf.set("mapred.map.output.compression.codec", "org.apache.hadoop.io.compress.SnappyCodec");
+        conf.set("mapred.map.output.compression.codec", "org.apache.hadoop.io.compress.GzipCodec");
 
         // Runs the job.
         return job.waitForCompletion(true) ? 0 : 1;
