@@ -269,8 +269,9 @@ public class TitleHarvester extends Configured implements Tool
                 String title = getTitle(metadataText.toString(), context);
                 if (title != null)
                 {
-                    context.write(url, new Text(String.format("%1$s\n%2$s", title, joiner.join(categories))));
+                    context.write(url, new Text(String.format("%1$s\t%2$s", title, joiner.join(categories))));
                     context.getCounter(ParseStats.SUCCESS).increment(1);
+                    context.getCounter("URL_NUM_CATEGORIES", Integer.toString(categories.size())).increment(1);
                 }
             }
         }
@@ -278,8 +279,6 @@ public class TitleHarvester extends Configured implements Tool
 
     public static class TitleHarvestReducer extends Reducer<Text, Text, Text, Text>
     {
-        private static Splitter splitter = Splitter.on('\n').trimResults().limit(2);
-
         @Override
         public void reduce(Text url, Iterable<Text> values, Context context) throws InterruptedException, IOException
         {
@@ -289,32 +288,13 @@ public class TitleHarvester extends Configured implements Tool
             {
                 String valueStr = value.toString();
 
-                ArrayList<String> splitValues = Lists.newArrayList(splitter.split(valueStr));
-                String title = splitValues.get(0);
-                String categories = splitValues.get(1);
-
-                context.write(url, new Text(String.format("%1$s\t%2$s", title, categories)));
+                context.write(url, new Text(valueStr));
                 context.getCounter(ParseStats.SUCCESS).increment(1);
-
-                countCategories(context, categories);
 
                 urlOccurrence += 1;
             }
 
             context.getCounter("URL_OCCURRENCE", Integer.toString(urlOccurrence)).increment(1);
-        }
-
-        private void countCategories(Context context, String categories)
-        {
-            int numCategories = 1;
-            for (int i=0; i < categories.length(); i++)
-            {
-                if (categories.charAt(i) == ',')
-                {
-                    numCategories += 1;
-                }
-            }
-            context.getCounter("URL_NUM_CATEGORIES", Integer.toString(numCategories)).increment(1);
         }
     }
 
@@ -383,10 +363,15 @@ public class TitleHarvester extends Configured implements Tool
 
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
+        Configuration conf = job.getConfiguration();
         // Allows some (50%) of tasks fail; we might encounter the
         // occasional troublesome set of records and skipping a few
         // of 1000s won't hurt counts too much.
-        job.getConfiguration().set("mapred.max.map.failures.percent", "50");
+        conf.set("mapred.max.map.failures.percent", "50");
+
+        // Compress the intermediate results from the map tasks
+        conf.set("mapred.compress.map.output", "true");
+        conf.set("mapred.map.output.compression.codec", "org.apache.hadoop.io.compress.SnappyCodec");
 
         // Runs the job.
         return job.waitForCompletion(true) ? 0 : 1;
