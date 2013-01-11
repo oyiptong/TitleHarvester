@@ -1,8 +1,6 @@
 package org.mozilla.up;
 
 import com.google.common.base.Joiner;
-import com.google.common.base.Splitter;
-import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
@@ -55,6 +53,36 @@ public class TitleHarvester extends Configured implements Tool
         DATA_NO_JSON,
     }
 
+    enum PageHTTPStatus
+    {
+        INFO_1XX,
+        SUCCESS_2XX,
+        REDIRECTION_3XX,
+        ERROR_4XX,
+        ERROR_5XX,
+        UNDEFINED,
+    }
+
+    enum CategoryStats
+    {
+        ONE,
+        TWO,
+        THREE,
+        FOUR,
+        FIVE,
+        MORE,
+    }
+
+    enum URLOccurrence
+    {
+        ONE,
+        TWO,
+        THREE,
+        FOUR,
+        FIVE,
+        MORE,
+    }
+
     public static class TitleHarvestMapper extends Mapper<Text, Text, Text, Text>
     {
         // represent ruleset for blekko data, including regular expression
@@ -80,6 +108,31 @@ public class TitleHarvester extends Configured implements Tool
         protected void setup(Context context) throws InterruptedException, IOException {
             super.setup(context);
             setupCategories(context);
+        }
+
+        private void logStatusCode(Context context, int statusCode)
+        {
+            // Log non-200 status codes
+            if (statusCode < 200)
+            {
+                context.getCounter(PageHTTPStatus.INFO_1XX).increment(1);
+
+            } else if (statusCode < 300)
+            {
+                context.getCounter(PageHTTPStatus.SUCCESS_2XX).increment(1);
+
+            } else if (statusCode < 400)
+            {
+                context.getCounter(PageHTTPStatus.REDIRECTION_3XX).increment(1);
+
+            } else if (statusCode < 500)
+            {
+                context.getCounter(PageHTTPStatus.ERROR_4XX).increment(1);
+
+            } else
+            {
+                context.getCounter(PageHTTPStatus.ERROR_5XX).increment(1);
+            }
         }
 
         private String getTitle(String metadata, Context context) throws IOException
@@ -109,7 +162,7 @@ public class TitleHarvester extends Configured implements Tool
                 if (nameField != null && nameField.equals("http_result"))
                 {
                     statusCode = p.getIntValue();
-                    context.getCounter("HTTP_STATUS", Integer.toString(statusCode)).increment(1);
+                    logStatusCode(context, statusCode);
 
                     if (statusCode < 200 || statusCode >= 300)
                     {
@@ -122,10 +175,12 @@ public class TitleHarvester extends Configured implements Tool
                     {
                         String subObjName = p.getCurrentName();
                         if (p.getCurrentToken() == JsonToken.START_ARRAY) {
+
                             // processing links or meta_tags
                             while (p.nextToken() != JsonToken.END_ARRAY) {
-                                // do nothing
+                                // do nothing, just skip them
                             }
+
                         } else if (subObjName != null &&  nameField.equals("content"))
                         {
                             if (subObjName.equals("title"))
@@ -152,9 +207,10 @@ public class TitleHarvester extends Configured implements Tool
                         }
                     }
                 }
+
                 if (statusCode == -1)
                 {
-                    context.getCounter("HTTP_STATUS", "undefined").increment(1);
+                    context.getCounter(PageHTTPStatus.UNDEFINED).increment(1);
 
                 } else if (!htmlDoc)
                 {
@@ -251,6 +307,34 @@ public class TitleHarvester extends Configured implements Tool
             return null;
         }
 
+        private void logNumCategories(Context context, int numCategories)
+        {
+            if (numCategories == 1)
+            {
+                context.getCounter(CategoryStats.ONE).increment(1);
+
+            } else if (numCategories == 2)
+            {
+                context.getCounter(CategoryStats.TWO).increment(1);
+
+            } else if (numCategories == 3)
+            {
+                context.getCounter(CategoryStats.THREE).increment(1);
+
+            } else if (numCategories == 4)
+            {
+                context.getCounter(CategoryStats.FOUR).increment(1);
+
+            } else if (numCategories == 5)
+            {
+                context.getCounter(CategoryStats.FIVE).increment(1);
+
+            } else if (numCategories > 5)
+            {
+                context.getCounter(CategoryStats.MORE).increment(1);
+            }
+        }
+
         @Override
         public void map(Text url, Text metadataText, Context context) throws InterruptedException, IOException
         {
@@ -271,7 +355,8 @@ public class TitleHarvester extends Configured implements Tool
                 {
                     context.write(url, new Text(String.format("%1$s\t%2$s", title, joiner.join(categories))));
                     context.getCounter(ParseStats.SUCCESS).increment(1);
-                    context.getCounter("URL_NUM_CATEGORIES", Integer.toString(categories.size())).increment(1);
+
+                    logNumCategories(context, categories.size());
                 }
             }
         }
@@ -279,6 +364,34 @@ public class TitleHarvester extends Configured implements Tool
 
     public static class TitleHarvestReducer extends Reducer<Text, Text, Text, Text>
     {
+        private void logNumOccurrences(Context context, int numOccurrences)
+        {
+            if (numOccurrences == 1)
+            {
+                context.getCounter(URLOccurrence.ONE).increment(1);
+
+            } else if (numOccurrences == 2)
+            {
+                context.getCounter(URLOccurrence.TWO).increment(1);
+
+            } else if (numOccurrences == 3)
+            {
+                context.getCounter(URLOccurrence.THREE).increment(1);
+
+            } else if (numOccurrences == 4)
+            {
+                context.getCounter(URLOccurrence.FOUR).increment(1);
+
+            } else if (numOccurrences == 5)
+            {
+                context.getCounter(URLOccurrence.FIVE).increment(1);
+
+            } else if (numOccurrences > 5)
+            {
+                context.getCounter(URLOccurrence.MORE).increment(1);
+            }
+        }
+
         @Override
         public void reduce(Text url, Iterable<Text> values, Context context) throws InterruptedException, IOException
         {
@@ -294,7 +407,7 @@ public class TitleHarvester extends Configured implements Tool
                 urlOccurrence += 1;
             }
 
-            context.getCounter("URL_OCCURRENCE", Integer.toString(urlOccurrence)).increment(1);
+            logNumOccurrences(context, urlOccurrence);
         }
     }
 
@@ -333,7 +446,6 @@ public class TitleHarvester extends Configured implements Tool
 
         job.setMapperClass(TitleHarvestMapper.class);
         job.setReducerClass(TitleHarvestReducer.class);
-        //job.setNumReduceTasks(10);
 
         job.setInputFormatClass(SequenceFileInputFormat.class);
 
