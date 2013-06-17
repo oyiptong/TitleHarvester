@@ -31,10 +31,10 @@
     <!-- Create the distribution directory -->
     <mkdir dir="${dist}/lib"/>
     <mkdir dir="${build}/lib"/>
-    <mkdir dir="${dist}/data"/>
+
     <mkdir dir="${build}/data"/>
     <mkdir dir="${build}/data/profiles"/>
-    <mkdir dir="${dist}/data/profiles"/>
+    <mkdir dir="${build}/data/stop-words"/>
     <!-- Put everything in ${build}/lib into the lib/ dir of build -->
     <copy todir="${build}/lib">
       <fileset dir="lib" includes="*.jar" />
@@ -45,9 +45,12 @@
     <copy todir="${build}/data/profiles">
       <fileset dir="data/profiles" includes="*" />
     </copy>
+    <copy todir="${build}/data/stop-words">
+      <fileset dir="data/stop-words" includes="*.txt" />
+    </copy>
      
     <jar jarfile="${dist}/lib/TitleHarvester.jar" basedir="${build}">
-      <zipfileset includes="**/*.class **/*.json **/profiles/*" src="lib/jsoup-1.6.1.jar"/>
+      <zipfileset includes="**/*.class **/*.json data/profiles/* data/stop-words/*.txt" src="lib/jsoup-1.6.1.jar"/>
     </jar> 
   </target>
 

@@ -1,5 +1,10 @@
 package org.mozilla.up;
 
+import com.google.common.base.CharMatcher;
+import com.google.common.base.Joiner;
+import com.google.common.base.Splitter;
+import com.google.common.collect.HashMultiset;
+import com.google.common.collect.Multiset;
 import com.google.common.net.InternetDomainName;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
@@ -26,7 +31,6 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.regex.Pattern;
 
 /**
  * Created with IntelliJ IDEA.
@@ -45,9 +49,6 @@ public class TextHarvester extends Configured implements Tool
         ERR_URI_PARSE,
         ERR_URI_NO_SUFFIX,
         SUCCESS,
-        PAGE_NO_CATEGORY,
-        PAGE_NO_TITLE,
-        DATA_NO_JSON,
     }
 
     enum URLOccurrence
@@ -62,45 +63,27 @@ public class TextHarvester extends Configured implements Tool
 
     public static class TextHarvestMapper extends Mapper<Text, Text, Text, Text>
     {
-        private static Pattern wwwPattern = Pattern.compile("www\\w*");
         private static HashSet<String> domainWhitelist;
-        private static Pattern newLinePattern = Pattern.compile("\\W*\\r?\\n");
+        private static HashSet<String> stopwords;
+        private static CharMatcher tokenMatcher = CharMatcher.WHITESPACE
+                .or(CharMatcher.JAVA_LETTER_OR_DIGIT.negate())
+                .and(CharMatcher.isNot('\''));
+        private static Joiner tokenJoiner = Joiner.on(" ").skipNulls();
 
+        /**
+         * Obtains the top private domain of a given url. e.g. games.1up.com begets 1up.com
+         * @param url input url as a string
+         * @param context hadoop context
+         * @return top private domain of a url
+         */
         private String getDomain(String url, Context context)
         {
             try
             {
                 URL uri = new URL(url.toLowerCase());
-                String hostName = uri.getHost();
                 InternetDomainName domainName = InternetDomainName.from(uri.getHost());
                 String domainStr = domainName.topPrivateDomain().name();
 
-                if (!hostName.equals(domainStr))
-                {
-                    int domainIndex = hostName.indexOf(domainStr);
-
-                    if (domainIndex > 1)
-                    {
-                        try
-                        {
-                            String subDomains = hostName.substring(0, domainIndex-1);
-                            if (wwwPattern.matcher(subDomains).matches())
-                            {
-                                hostName = domainStr;
-                            }
-                        } catch (StringIndexOutOfBoundsException e)
-                        {
-                            // erroneous url
-                            context.getCounter(ParseStats.ERR_URI_MALFORMED).increment(1);
-                            return null;
-                        }
-                    } else
-                    {
-                        // url probably wrong
-                        context.getCounter(ParseStats.ERR_URI_MALFORMED).increment(1);
-                        return null;
-                    }
-                }
                 return domainStr;
 
             } catch (MalformedURLException e)
@@ -129,13 +112,65 @@ public class TextHarvester extends Configured implements Tool
             }
         }
 
+        /**
+         * Cleans up text to make it ready for further processing
+         * @param input input text
+         * @return a stripped, stop-worded version of the given input
+         */
+        private String getCleanedText(String input)
+        {
+            ArrayList<String> outTokens = new ArrayList<String>();
+
+            // tokenize
+            Iterable<String> inTokens = Splitter.on(tokenMatcher)
+                    .trimResults(CharMatcher.JAVA_LETTER.negate())
+                    .omitEmptyStrings()
+                    .split(input);
+
+            HashMultiset<String> tokenCounts = HashMultiset.create();
+            for (String token: inTokens)
+            {
+                token = token.toLowerCase();
+                if (!stopwords.contains(token))
+                {
+                    tokenCounts.add(token);
+                }
+            }
+
+            for (Multiset.Entry<String> entry: tokenCounts.entrySet())
+            {
+                outTokens.add(String.format("%1$s:%2$d", entry.getElement(), entry.getCount()));
+            }
+
+            return tokenJoiner.join(outTokens);
+        }
+
         private void setupLangDetector(Context context) throws LangDetectException
         {
             try
             {
-                File profileDir= new File(getClass().getResource("/data/profiles").getFile());
+                File profileDir = new File(getClass().getResource("/data/profiles").getFile());
                 DetectorFactory.loadProfile(profileDir);
             } catch (LangDetectException e)
+            {
+                context.getCounter(ParseStats.ERR_SETUP).increment(1);
+                throw e;
+            }
+        }
+
+        private void setupStopwordList(Context context) throws IOException
+        {
+            try
+            {
+                stopwords = new HashSet<String>();
+                InputStream is = getClass().getResourceAsStream("/data/stop-words/stop-words-english.txt");
+                BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+                String line;
+                while ((line = reader.readLine()) != null)
+                {
+                    stopwords.add(line);
+                }
+            } catch (IOException e)
             {
                 context.getCounter(ParseStats.ERR_SETUP).increment(1);
                 throw e;
@@ -148,6 +183,7 @@ public class TextHarvester extends Configured implements Tool
             try
             {
                 setupLangDetector(context);
+                setupStopwordList(context);
             } catch (LangDetectException e)
             {
                 //UGLY: can't throw LangDetectException due to interface, convert to IOException
@@ -174,9 +210,8 @@ public class TextHarvester extends Configured implements Tool
                     String domain = getDomain(url.toString(), context);
                     if (domainWhitelist.contains(domain))
                     {
-                        String textStr = text.toString();
-                        textStr = newLinePattern.matcher(textStr).replaceAll(" ");
-                        context.write(url, new Text(String.format("%1$s\t%2$s", domain, textStr)));
+                        String cleanedText = getCleanedText(text.toString());
+                        context.write(url, new Text(String.format("%1$s\t%2$s", domain, cleanedText)));
                     }
                 }
 
@@ -236,13 +271,18 @@ public class TextHarvester extends Configured implements Tool
                 context.write(key, new Text(Integer.toString(sum)));
             } else
             {
-                String pastValue;
+                // if text, store the longest text value in the case of multiple occurrences
+                Text longestValue = new Text();
                 for (Text value : values)
                 {
-                    context.write(key, value);
-                    context.getCounter(ParseStats.SUCCESS).increment(1);
+                    if (value.getLength() > longestValue.getLength())
+                    {
+                        longestValue = value;
+                    }
                     urlOccurrence += 1;
                 }
+                context.write(key, longestValue);
+                context.getCounter(ParseStats.SUCCESS).increment(1);
                 logNumOccurrences(context, urlOccurrence);
             }
 
