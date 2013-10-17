@@ -4,7 +4,6 @@ import csv
 import sys
 import bz2file
 import random
-from unidecode import unidecode
 
 FIELD_SEP = '\t'
 CATEGORY_SEP = ','
