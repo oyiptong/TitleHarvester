@@ -36,7 +36,7 @@ if __name__ == '__main__':
     boto_config = BotoConfig()
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:],'',['awsKey=','awsSecret=','jobAwsKey=','jobAwsSecret=','s3Bucket=','core-count=','spot-count=','spot-bid=','keypair=','test'])
+        opts, args = getopt.getopt(sys.argv[1:],'',['awsKey=','awsSecret=','jobAwsKey=','jobAwsSecret=','s3Bucket=','core-count=','spot-count=','spot-bid=','keypair=','test', 'keep-alive'])
     except:
         usage()
 
@@ -51,7 +51,8 @@ if __name__ == '__main__':
               'num_core' : 2,
               'num_spot' : 0,
               'spot_bid_price' : None,
-              'test_mode' : False
+              'test_mode' : False,
+              'keep_alive_mode' : False
              }
 
     for o, a in opts:
@@ -75,6 +76,8 @@ if __name__ == '__main__':
             params['spot_bid_price']=a
         elif o in ('--test'):
             params['test_mode']=True
+        elif o in ('--keep-alive'):
+            params['keep_alive_mode']=True
 
     required = ['aws_key','secret','job_aws_key','job_secret','keypair','s3_bucket']
 
@@ -149,7 +152,8 @@ if __name__ == '__main__':
     job_id = emr.run_jobflow(name='TitleHarvester - valid_segments',
             ec2_keyname=params['keypair'],
             log_uri='s3n://{0}/valid-segments-logs/'.format(params['s3_bucket']),
-            enable_debugging=True,
+            enable_debugging=False,
+            keep_alive=params['keep_alive_mode'],
             ami_version='2.3.1',
             instance_groups=instance_groups,
             steps=[step],
