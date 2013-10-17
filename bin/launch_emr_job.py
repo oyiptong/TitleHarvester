@@ -133,7 +133,7 @@ if __name__ == '__main__':
         "-Dfs.s3.awsAccessKeyId={0}".format(params['job_aws_key']),
         "-Dfs.s3.awsSecretAccessKey={0}".format(params['job_secret']),
         "s3n://aws-publicdatasets/common-crawl/parse-output/valid_segments.txt",
-        "s3n://{0}/valid-segments-results/".format(params['s3_bucket'])
+        "s3n://{0}/reduced-ontology-results/".format(params['s3_bucket'])
     ]
 
     if params['test_mode'] == True:
@@ -149,9 +149,9 @@ if __name__ == '__main__':
     # given that a cc2.8xlarge costs $2.40/h
     # the job should cost just under $200 and run for 3 hours and a bit
     emr = boto.connect_emr()
-    job_id = emr.run_jobflow(name='TitleHarvester - valid_segments',
+    job_id = emr.run_jobflow(name='TitleHarvester - reduced-ontology',
             ec2_keyname=params['keypair'],
-            log_uri='s3n://{0}/valid-segments-logs/'.format(params['s3_bucket']),
+            log_uri='s3n://{0}/reduced-ontology-logs/'.format(params['s3_bucket']),
             enable_debugging=False,
             keep_alive=params['keep_alive_mode'],
             ami_version='2.3.1',
