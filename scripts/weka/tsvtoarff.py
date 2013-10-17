@@ -4,7 +4,6 @@ import re
 import csv
 import sys
 import bz2file
-from unidecode import unidecode
 
 FIELD_SEP = '\t'
 CATEGORY_SEP = ','
