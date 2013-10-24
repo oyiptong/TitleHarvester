@@ -14,18 +14,21 @@ from boto import Config as BotoConfig
 usage_string = """
 USAGE:
 
-    launch_emr_job.py --awsKey=[awsKey] --awsSecret=[awsSecret] --keypair=[key pair name] --s3Bucket --core-count=[core count] --spot-count=[spot count] --spot-bid=[bid price] --jobAwsKey=[jobAwsKey] --jobAwsSecret=[jobAwsSecret]
+    launch_emr_job.py --jobName=[job name] --awsKey=[awsKey] --awsSecret=[awsSecret] --keypair=[key pair name] --s3Bucket=[bucket name] --core-count=[core count] --spot-count=[spot count] --spot-bid=[bid price] --jobAwsKey=[jobAwsKey] --jobAwsSecret=[jobAwsSecret] --availabilityZone=[availabilityZone] --keep-alive
 
 Where:
-    awsKey         - the aws key
-    awsSecret      - the aws secret
-    s3Bucket       - the s3 bucket to write results to
-    keypair        - the aws public/private key pair to use 
-    jobAwsKey      - aws key for job to access S3
-    jobAwsSecret   - aws secret for job to access S3
-    core-count     - the number of core instances to run 
-    spot-count     - the number of spot instances to run 
-    spot-bid       - spot instance bid price
+    awsKey              - the aws key
+    awsSecret           - the aws secret
+    jobName             - the name to call the job
+    s3Bucket            - the s3 bucket to write results to
+    keypair             - the aws public/private key pair to use 
+    jobAwsKey           - aws key for job to access S3 [optional]
+    jobAwsSecret        - aws secret for job to access S3 [optional]
+    core-count          - the number of core instances to run [optional]
+    spot-count          - the number of spot instances to run [optional]
+    spot-bid            - spot instance bid price [optional]
+    availabilityZone    - availability zone to launch EMR jobs from [optional]
+    keep-alive          - keep servers around after job [optional]
 """
 
 def usage():
@@ -36,7 +39,7 @@ if __name__ == '__main__':
     boto_config = BotoConfig()
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:],'',['awsKey=','awsSecret=','jobAwsKey=','jobAwsSecret=','s3Bucket=','core-count=','spot-count=','spot-bid=','keypair=','test', 'keep-alive'])
+        opts, args = getopt.getopt(sys.argv[1:],'', ['awsKey=','awsSecret=','jobAwsKey=','jobAwsSecret=','s3Bucket=','core-count=','spot-count=','spot-bid=','keypair=','jobName=','availabilityZone=','keep-alive'])
     except:
         usage()
 
@@ -48,10 +51,11 @@ if __name__ == '__main__':
               'job_secret' : None or boto_config.get('Credentials', 'aws_secret_access_key'),
               'keypair' : None,
               's3_bucket' : None,
+              'job_name' : None,
+              'availability_zone' : "us-east-1d",
               'num_core' : 2,
               'num_spot' : 0,
               'spot_bid_price' : None,
-              'test_mode' : False,
               'keep_alive_mode' : False
              }
 
@@ -74,12 +78,18 @@ if __name__ == '__main__':
             params['s3_bucket']=a
         elif o in ('--spot-bid'):
             params['spot_bid_price']=a
-        elif o in ('--test'):
-            params['test_mode']=True
         elif o in ('--keep-alive'):
             params['keep_alive_mode']=True
+        elif o in ('--availabilityZone'):
+            params['availability_zone']=a
+        elif o in ('--jobName'):
+            params['job_name']=a
 
-    required = ['aws_key','secret','job_aws_key','job_secret','keypair','s3_bucket']
+    required = ['aws_key', 'secret', 'keypair', 's3_bucket', 'job_name']
+
+    if not (params['job_aws_key'] and params['job_aws_secret']):
+        params['job_aws_key'] = params['aws_key']
+        params['job_secret'] = params['secret']
 
     for pname in required:
         if not params.get(pname, None):
@@ -89,8 +99,8 @@ if __name__ == '__main__':
     for p, v in params.iteritems():
         print "param:" + `p`+ " value:" + `v`
 
-    namenode_instance_group = InstanceGroup(1,"MASTER","cc1.4xlarge","ON_DEMAND","MASTER_GROUP")
-    core_instance_group = InstanceGroup(params['num_core'],"CORE","cc2.8xlarge","ON_DEMAND","CORE_GROUP")
+    namenode_instance_group = InstanceGroup(1,"MASTER","m2.4xlarge","ON_DEMAND","MASTER_GROUP")
+    core_instance_group = InstanceGroup(params['num_core'],"CORE","m2.4xlarge","ON_DEMAND","CORE_GROUP")
 
     instance_groups=[]
     if params['num_spot'] <= 0:
@@ -133,25 +143,21 @@ if __name__ == '__main__':
         "-Dfs.s3.awsAccessKeyId={0}".format(params['job_aws_key']),
         "-Dfs.s3.awsSecretAccessKey={0}".format(params['job_secret']),
         "s3n://aws-publicdatasets/common-crawl/parse-output/valid_segments.txt",
-        "s3n://{0}/reduced-ontology-results/".format(params['s3_bucket'])
+        "s3n://{0}/{1}-results/".format(params['s3_bucket'], params['job_name'])
     ]
 
-    if params['test_mode'] == True:
-        step_args.append('--testMode')
-
     step = JarStep(name='org.mozilla.up.TitleHarvester',
-            jar='s3n://mozilla-up/TitleHarvester.jar',
+            jar='s3n://{0}/TitleHarvester.jar'.format(params['s3_bucket']),
             step_args=step_args
     )
 
     print "instance groups: ", instance_groups
 
-    # given that a cc2.8xlarge costs $2.40/h
-    # the job should cost just under $200 and run for 3 hours and a bit
     emr = boto.connect_emr()
-    job_id = emr.run_jobflow(name='TitleHarvester - reduced-ontology',
+    job_id = emr.run_jobflow(name='TitleHarvester - {0}'.format(params['job_name']),
+            availability_zone=params['availability_zone'],
             ec2_keyname=params['keypair'],
-            log_uri='s3n://{0}/reduced-ontology-logs/'.format(params['s3_bucket']),
+            log_uri='s3n://{0}/{1}-logs/'.format(params['s3_bucket'], params['job_name']),
             enable_debugging=False,
             keep_alive=params['keep_alive_mode'],
             ami_version='2.3.1',
