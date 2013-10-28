@@ -28,12 +28,12 @@ public class TitleHarvesterMapperGetTitleTest
     public void setUp() throws Exception
     {
         thm = new TitleHarvester.TitleHarvestMapper();
-        method = TitleHarvester.TitleHarvestMapper.class.getDeclaredMethod("getTitle", String.class, Mapper.Context.class);
+        method = TitleHarvester.TitleHarvestMapper.class.getDeclaredMethod("getTitleKeywords", String.class, Mapper.Context.class);
         method.setAccessible(true);
     }
 
     @Test
-    public void testMapperGetTitleEmptyInput() throws Exception
+    public void testMapperGetTitleKeywordsEmptyInput() throws Exception
     {
         new NonStrictExpectations()
         {{
@@ -43,26 +43,26 @@ public class TitleHarvesterMapperGetTitleTest
                 mockCounter.increment(anyInt);
         }};
 
-        String title;
+        String[] titleKeywords;
 
-        title = (String) method.invoke(thm, null, mockedContext);
-        assertEquals(null, title);
+        titleKeywords = (String[]) method.invoke(thm, null, mockedContext);
+        assertEquals(null, titleKeywords);
 
-        title = (String) method.invoke(thm, "", mockedContext);
-        assertEquals(null, title);
+        titleKeywords = (String[]) method.invoke(thm, "", mockedContext);
+        assertEquals(null, titleKeywords);
 
-        title = (String) method.invoke(thm, " ", mockedContext);
-        assertEquals(null, title);
+        titleKeywords = (String[]) method.invoke(thm, " ", mockedContext);
+        assertEquals(null, titleKeywords);
 
-        title = (String) method.invoke(thm, "{}", mockedContext);
-        assertEquals(null, title);
+        titleKeywords = (String[]) method.invoke(thm, "{}", mockedContext);
+        assertEquals(null, titleKeywords);
 
-        title = (String) method.invoke(thm, "{\"http_result\":302}", mockedContext);
-        assertEquals(null, title);
+        titleKeywords = (String[]) method.invoke(thm, "{\"http_result\":302}", mockedContext);
+        assertEquals(null, titleKeywords);
     }
 
     @Test
-    public void testMapperGetTitleNoTitle() throws Exception
+    public void testMapperGetTitleKeywordsNoTitle() throws Exception
     {
         new NonStrictExpectations() {{
             mockedContext.getCounter(TitleHarvester.PageHTTPStatus.SUCCESS_2XX); result = mockCounter;
@@ -78,26 +78,44 @@ public class TitleHarvesterMapperGetTitleTest
                 "{\"http_result\":200, \"content\": {\"title\": \" \"}}"
         };
 
-        String title;
+        String[] titleKeywords;
         for (String json : inputs)
         {
-            title = (String) method.invoke(thm, json, mockedContext);
-            assertEquals(null, title);
+            titleKeywords = (String[]) method.invoke(thm, json, mockedContext);
+            assertEquals(null, titleKeywords);
         }
     }
 
     @Test
-    public void testMapperGetTitle() throws Exception
+    public void testMapperGetTitleKeywordsNoKeywords() throws Exception
+    {
+    	new NonStrictExpectations() {{
+            mockedContext.getCounter(TitleHarvester.PageHTTPStatus.SUCCESS_2XX); result = mockCounter;
+            mockedContext.getCounter("DATA_PAGE_TYPE", "undefined"); result = mockCounter;
+            mockedContext.getCounter("DATA_PAGE_TYPE", "html-doc"); result = mockCounter;
+            mockedContext.getCounter(TitleHarvester.ParseStats.PAGE_NO_KEYWORDS); result = mockCounter;
+            mockCounter.increment(anyInt);
+        }};
+        
+        String json = "{\"http_result\":200, \"content\": {\"title\": \"AwesomeTitle\", \"type\": \"html-doc\"}}";
+        String[] titleKeywords = (String[]) method.invoke(thm, json, mockedContext);
+        assertEquals("AwesomeTitle", titleKeywords[0]);
+        assertEquals(null, titleKeywords[1]);
+    }
+    @Test
+    public void testMapperGetTitleKeywords() throws Exception
     {
         new NonStrictExpectations() {{
             mockedContext.getCounter(TitleHarvester.PageHTTPStatus.SUCCESS_2XX); result = mockCounter;
             mockedContext.getCounter("DATA_PAGE_TYPE", "undefined"); result = mockCounter;
             mockedContext.getCounter("DATA_PAGE_TYPE", "html-doc"); result = mockCounter;
+            mockedContext.getCounter(TitleHarvester.ParseStats.PAGE_NO_KEYWORDS); result = mockCounter;
             mockCounter.increment(anyInt);
         }};
 
-        String json = "{\"http_result\":200, \"content\": {\"title\": \"AwesomeTitle\", \"type\": \"html-doc\"}}";
-        String title = (String) method.invoke(thm, json, mockedContext);
-        assertEquals("AwesomeTitle", title);
+        String json = "{\"http_result\":200, \"content\": {\"title\": \"AwesomeTitle\", \"type\": \"html-doc\", \"meta_tags\": [{\"name\": \"keywords\", \"content\": \"AwesomeKeywords\"}]}}";
+        String[] titleKeywords = (String[]) method.invoke(thm, json, mockedContext);
+        assertEquals("AwesomeTitle", titleKeywords[0]);
+        assertEquals("AwesomeKeywords", titleKeywords[1]);
     }
 }
