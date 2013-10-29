@@ -84,6 +84,8 @@ public class TitleHarvester extends Configured implements Tool
         MORE,
     }
 
+    public static final String DEFAULT_REGION_CODE = "en-US";
+
     public static class TitleHarvestMapper extends Mapper<Text, Text, Text, Text>
     {
         // represent ruleset for blekko data, including regular expression
@@ -97,7 +99,16 @@ public class TitleHarvester extends Configured implements Tool
             try
             {
                 ObjectMapper mapper = new ObjectMapper();
-                domainCategories = mapper.readValue(getClass().getResourceAsStream("/data/domain_cat_index.json"), new TypeReference<Map<String, ArrayList<String>>>(){});
+                String filePath = null;
+                String regionCode = context.getConfiguration().get("titleHarvester.regionCode");
+                String catIndex = context.getConfiguration().get("titleHarvester.catIndex");
+
+                if (null == catIndex || catIndex.isEmpty()) {
+                	filePath = String.format("/data/domain_cat_index/%1$s.json", regionCode);
+                } else {
+                	filePath = String.format("/data/domain_cat_index/%1$s.%2$s.json", regionCode, catIndex);
+                }
+                domainCategories = mapper.readValue(getClass().getResourceAsStream(filePath), new TypeReference<Map<String, ArrayList<String>>>(){});
             } catch(IOException e)
             {
                 context.getCounter(ParseStats.ERR_SETUP).increment(1);
@@ -440,12 +451,26 @@ public class TitleHarvester extends Configured implements Tool
         if (args.length < 2)
         {
 
-            System.err.printf("Usage: %s [generic options] <segment_file_path> <output_path>\n", getClass().getSimpleName());
+            System.err.printf("Usage: %s [generic options] <segment_file_path> <output_path> [--region-code regionCode]\n", getClass().getSimpleName());
 
             ToolRunner.printGenericCommandUsage(System.err);
 
             return -1;
 
+        }
+
+
+        // Get region code and cat index from arguments
+        String regionCode = DEFAULT_REGION_CODE;
+        String catIndex = "";
+        if (args.length > 2) {
+            for (int i = 0; i < args.length; i++) {
+                if ("--region-code".equals(args[i]) && i < args.length - 1) {
+                    regionCode = args[i + 1];
+                } else if ("--cat-index".equals(args[i]) && i < args.length -1) {
+                	catIndex = args[i + 1];
+                }
+            }
         }
 
         Job job = new Job(getConf());
@@ -493,6 +518,11 @@ public class TitleHarvester extends Configured implements Tool
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
         Configuration conf = job.getConfiguration();
+
+        // Set regionCode and catIndex for indentifying the categories file we should parse later.
+        conf.set("titleHarvester.regionCode", regionCode);
+        conf.set("titleHarvester.catIndex", catIndex);
+
         // Allows some (50%) of tasks fail; we might encounter the
         // occasional troublesome set of records and skipping a few
         // of 1000s won't hurt counts too much.
