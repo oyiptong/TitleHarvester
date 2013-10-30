@@ -139,7 +139,7 @@ public class TitleHarvester extends Configured implements Tool
         {
             /* parse json metadata and obtain title */
 
-            if (metadata == null || metadata.trim() == "")
+            if (metadata == null || metadata.trim().isEmpty())
             {
                 context.getCounter(ParseStats.DATA_NO_JSON).increment(1);
                 return null;
