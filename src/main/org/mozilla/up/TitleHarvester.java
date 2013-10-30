@@ -216,7 +216,7 @@ public class TitleHarvester extends Configured implements Tool
                 {
                     context.getCounter("DATA_PAGE_TYPE", "undefined").increment(1);
 
-                } else if (title == null || title == "")
+                } else if (title == null || title.trim() == "")
                 {
                     context.getCounter(ParseStats.PAGE_NO_TITLE).increment(1);
 
