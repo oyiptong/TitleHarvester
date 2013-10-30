@@ -39,6 +39,7 @@
         <mkdir dir="${build.main.dir}/lib"/>
 
         <mkdir dir="${build.main.dir}/data"/>
+        <mkdir dir="${build.main.dir}/data/domain_cat_index"/>
         <mkdir dir="${build.main.dir}/data/profiles"/>
         <mkdir dir="${build.main.dir}/data/stop-words"/>
         <!-- Put everything in ${build}/lib into the lib/ dir of build -->
@@ -47,6 +48,9 @@
         </copy>
         <copy todir="${build.main.dir}/data">
             <fileset dir="data" includes="*.json" />
+        </copy>
+        <copy todir="${build.main.dir}/data/domain_cat_index">
+            <fileset dir="data/domain_cat_index" includes="*.json" />
         </copy>
         <copy todir="${build.main.dir}/data/profiles">
             <fileset dir="data/profiles" includes="*" />

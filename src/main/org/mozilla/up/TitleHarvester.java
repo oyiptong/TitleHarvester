@@ -50,6 +50,7 @@ public class TitleHarvester extends Configured implements Tool
         SUCCESS,
         PAGE_NO_CATEGORY,
         PAGE_NO_TITLE,
+        PAGE_NO_KEYWORDS,
         DATA_NO_JSON,
     }
 
@@ -83,6 +84,8 @@ public class TitleHarvester extends Configured implements Tool
         MORE,
     }
 
+    public static final String DEFAULT_REGION_CODE = "en-US";
+
     public static class TitleHarvestMapper extends Mapper<Text, Text, Text, Text>
     {
         // represent ruleset for blekko data, including regular expression
@@ -96,7 +99,16 @@ public class TitleHarvester extends Configured implements Tool
             try
             {
                 ObjectMapper mapper = new ObjectMapper();
-                domainCategories = mapper.readValue(getClass().getResourceAsStream("/data/domain_cat_index.json"), new TypeReference<Map<String, ArrayList<String>>>(){});
+                String filePath = null;
+                String regionCode = context.getConfiguration().get("titleHarvester.regionCode");
+                String catIndex = context.getConfiguration().get("titleHarvester.catIndex");
+
+                if (null == catIndex || catIndex.isEmpty()) {
+                	filePath = String.format("/data/domain_cat_index/%1$s.json", regionCode);
+                } else {
+                	filePath = String.format("/data/domain_cat_index/%1$s.%2$s.json", regionCode, catIndex);
+                }
+                domainCategories = mapper.readValue(getClass().getResourceAsStream(filePath), new TypeReference<Map<String, ArrayList<String>>>(){});
             } catch(IOException e)
             {
                 context.getCounter(ParseStats.ERR_SETUP).increment(1);
@@ -135,7 +147,14 @@ public class TitleHarvester extends Configured implements Tool
             }
         }
 
-        private String getTitle(String metadata, Context context) throws IOException
+        /**
+         * Get the title and the keywords in meta tags.
+         * @param metadata
+         * @param context
+         * @return
+         * @throws IOException
+         */
+        private String[] getTitleKeywords(String metadata, Context context) throws IOException
         {
             /* parse json metadata and obtain title */
 
@@ -145,13 +164,14 @@ public class TitleHarvester extends Configured implements Tool
                 return null;
             }
 
+            String[] titleKeywords = {null, null};
+
             JsonFactory f = new JsonFactory();
             JsonParser p = f.createJsonParser(metadata);
 
             // get rid of START_OBJECT
             p.nextToken();
             boolean htmlDoc = false;
-            String title = null;
             int statusCode = -1;
 
             while (p.nextToken() != JsonToken.END_OBJECT)
@@ -175,10 +195,19 @@ public class TitleHarvester extends Configured implements Tool
                     {
                         String subObjName = p.getCurrentName();
                         if (p.getCurrentToken() == JsonToken.START_ARRAY) {
-
                             // processing links or meta_tags
                             while (p.nextToken() != JsonToken.END_ARRAY) {
-                                // do nothing, just skip them
+                                // get keywords
+                                if ("name".equals(p.getCurrentName())) {
+                                    p.nextToken();
+                                    if ("keywords".equals(p.getText())) {
+                                        p.nextToken();
+                                        if ("content".equals(p.getCurrentName())) {
+                                            p.nextToken();
+                                            titleKeywords[1] = p.getText().replaceAll("\\s+", " ").trim();
+                                        }
+                                    }
+                                }
                             }
 
                         } else if (subObjName != null &&  nameField.equals("content"))
@@ -186,7 +215,7 @@ public class TitleHarvester extends Configured implements Tool
                             if (subObjName.equals("title"))
                             {
                                 p.nextToken();
-                                title = p.getText().replaceAll("\\s+", " ").trim();
+                                titleKeywords[0] = p.getText().replaceAll("\\s+", " ").trim();
 
                             } else if (subObjName.equals("type"))
                             {
@@ -211,19 +240,18 @@ public class TitleHarvester extends Configured implements Tool
             if (statusCode == -1)
             {
                 context.getCounter(PageHTTPStatus.UNDEFINED).increment(1);
-
             } else if (!htmlDoc)
             {
                 context.getCounter("DATA_PAGE_TYPE", "undefined").increment(1);
-
-            } else if (title == null || title.isEmpty())
+            } else if (titleKeywords[0] == null || titleKeywords[0].isEmpty())
             {
+                System.out.println("!!!Counter: " + context.getCounter(ParseStats.PAGE_NO_TITLE));
                 context.getCounter(ParseStats.PAGE_NO_TITLE).increment(1);
-
-            } else
-            {
-                return title;
-
+            } else {
+                if (titleKeywords[1] == null || titleKeywords[1].isEmpty()) {
+                    context.getCounter(ParseStats.PAGE_NO_KEYWORDS).increment(1);
+                }
+                return titleKeywords;
             }
 
             return null;
@@ -350,10 +378,10 @@ public class TitleHarvester extends Configured implements Tool
             ArrayList<String> categories = getCategories(url.toString(), context);
 
             if (categories != null) {
-                String title = getTitle(metadataText.toString(), context);
-                if (title != null)
-                {
-                    context.write(url, new Text(String.format("%1$s\t%2$s", title, joiner.join(categories))));
+                String[] titleKeywords = getTitleKeywords(metadataText.toString(), context);
+                if (titleKeywords != null) {
+                    String keywords = titleKeywords[1] == null ? "" : titleKeywords[1];
+                    context.write(url, new Text(String.format("%1$s\t%2$s\t%3$s", titleKeywords[0], keywords, joiner.join(categories))));
                     context.getCounter(ParseStats.SUCCESS).increment(1);
 
                     logNumCategories(context, categories.size());
@@ -423,12 +451,26 @@ public class TitleHarvester extends Configured implements Tool
         if (args.length < 2)
         {
 
-            System.err.printf("Usage: %s [generic options] <segment_file_path> <output_path>\n", getClass().getSimpleName());
+            System.err.printf("Usage: %s [generic options] <segment_file_path> <output_path> [--region-code regionCode]\n", getClass().getSimpleName());
 
             ToolRunner.printGenericCommandUsage(System.err);
 
             return -1;
 
+        }
+
+
+        // Get region code and cat index from arguments
+        String regionCode = DEFAULT_REGION_CODE;
+        String catIndex = "";
+        if (args.length > 2) {
+            for (int i = 0; i < args.length; i++) {
+                if ("--region-code".equals(args[i]) && i < args.length - 1) {
+                    regionCode = args[i + 1];
+                } else if ("--cat-index".equals(args[i]) && i < args.length -1) {
+                	catIndex = args[i + 1];
+                }
+            }
         }
 
         Job job = new Job(getConf());
@@ -476,6 +518,11 @@ public class TitleHarvester extends Configured implements Tool
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
         Configuration conf = job.getConfiguration();
+
+        // Set regionCode and catIndex for indentifying the categories file we should parse later.
+        conf.set("titleHarvester.regionCode", regionCode);
+        conf.set("titleHarvester.catIndex", catIndex);
+
         // Allows some (50%) of tasks fail; we might encounter the
         // occasional troublesome set of records and skipping a few
         // of 1000s won't hurt counts too much.
