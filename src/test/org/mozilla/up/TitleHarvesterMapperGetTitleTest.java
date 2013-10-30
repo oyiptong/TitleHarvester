@@ -17,7 +17,7 @@ import static org.testng.AssertJUnit.*;
  * Date: 10/29/2013
  * Time: 12:17 PM
  */
-public class TitleHarvesterMapperTest
+public class TitleHarvesterMapperGetTitleTest
 {
     @Mocked Mapper.Context mockedContext;
     @Mocked Counter mockCounter;
@@ -36,7 +36,28 @@ public class TitleHarvesterMapperTest
     }
 
     @Test
-    public void testMapperGetTitleEmpty() throws Exception
+    public void testMapperGetTitleEmptyInput() throws Exception
+    {
+        Method method = TitleHarvester.TitleHarvestMapper.class.getDeclaredMethod("getTitle", String.class, Mapper.Context.class);
+        method.setAccessible(true);
+        new NonStrictExpectations() {{
+            mockedContext.getCounter(TitleHarvester.ParseStats.DATA_NO_JSON); result = mockCounter;
+            mockCounter.increment(anyInt);
+        }};
+        String title;
+
+        title = (String) method.invoke(thm, "", mockedContext);
+        assertEquals(null, title);
+
+        title = (String) method.invoke(thm, " ", mockedContext);
+        assertEquals(null, title);
+
+        title = (String) method.invoke(thm, null, mockedContext);
+        assertEquals(null, title);
+    }
+
+    @Test
+    public void testMapperGetTitle() throws Exception
     {
         Method method = TitleHarvester.TitleHarvestMapper.class.getDeclaredMethod("getTitle", String.class, Mapper.Context.class);
         method.setAccessible(true);
