@@ -38,6 +38,7 @@ public class TitleHarvesterMapperGetTitleTest
         new NonStrictExpectations()
         {{
                 mockedContext.getCounter(TitleHarvester.ParseStats.DATA_NO_JSON); result = mockCounter;
+                mockedContext.getCounter(TitleHarvester.PageHTTPStatus.UNDEFINED); result = mockCounter;
                 mockedContext.getCounter(TitleHarvester.PageHTTPStatus.REDIRECTION_3XX); result = mockCounter;
                 mockCounter.increment(anyInt);
         }};
@@ -83,5 +84,20 @@ public class TitleHarvesterMapperGetTitleTest
             title = (String) method.invoke(thm, json, mockedContext);
             assertEquals(null, title);
         }
+    }
+
+    @Test
+    public void testMapperGetTitle() throws Exception
+    {
+        new NonStrictExpectations() {{
+            mockedContext.getCounter(TitleHarvester.PageHTTPStatus.SUCCESS_2XX); result = mockCounter;
+            mockedContext.getCounter("DATA_PAGE_TYPE", "undefined"); result = mockCounter;
+            mockedContext.getCounter("DATA_PAGE_TYPE", "html-doc"); result = mockCounter;
+            mockCounter.increment(anyInt);
+        }};
+
+        String json = "{\"http_result\":200, \"content\": {\"title\": \"AwesomeTitle\", \"type\": \"html-doc\"}}";
+        String title = (String) method.invoke(thm, json, mockedContext);
+        assertEquals("AwesomeTitle", title);
     }
 }

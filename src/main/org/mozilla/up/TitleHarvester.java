@@ -193,7 +193,6 @@ public class TitleHarvester extends Configured implements Tool
                                 p.nextToken();
                                 String pageType = p.getText();
                                 context.getCounter("DATA_PAGE_TYPE", pageType).increment(1);
-
                                 if (pageType.equals("html-doc"))
                                 {
                                     htmlDoc = true;
@@ -207,25 +206,26 @@ public class TitleHarvester extends Configured implements Tool
                         }
                     }
                 }
-
-                if (statusCode == -1)
-                {
-                    context.getCounter(PageHTTPStatus.UNDEFINED).increment(1);
-
-                } else if (!htmlDoc)
-                {
-                    context.getCounter("DATA_PAGE_TYPE", "undefined").increment(1);
-
-                } else if (title == null || title.trim() == "")
-                {
-                    context.getCounter(ParseStats.PAGE_NO_TITLE).increment(1);
-
-                } else
-                {
-                    return title;
-
-                }
             }
+
+            if (statusCode == -1)
+            {
+                context.getCounter(PageHTTPStatus.UNDEFINED).increment(1);
+
+            } else if (!htmlDoc)
+            {
+                context.getCounter("DATA_PAGE_TYPE", "undefined").increment(1);
+
+            } else if (title == null || title.isEmpty())
+            {
+                context.getCounter(ParseStats.PAGE_NO_TITLE).increment(1);
+
+            } else
+            {
+                return title;
+
+            }
+
             return null;
         }
 
