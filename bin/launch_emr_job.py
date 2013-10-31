@@ -14,14 +14,16 @@ from boto import Config as BotoConfig
 usage_string = """
 USAGE:
 
-    launch_emr_job.py --jobName=[job name] --awsKey=[awsKey] --awsSecret=[awsSecret] --keypair=[key pair name] --s3Bucket=[bucket name] --core-count=[core count] --spot-count=[spot count] --spot-bid=[bid price] --jobAwsKey=[jobAwsKey] --jobAwsSecret=[jobAwsSecret] --availabilityZone=[availabilityZone] --keep-alive
+    launch_emr_job.py --jobName=[job name] --region-code=[region code] --cat-index=[cat index] --awsKey=[awsKey] --awsSecret=[awsSecret] --keypair=[key pair name] --s3Bucket=[bucket name] --core-count=[core count] --spot-count=[spot count] --spot-bid=[bid price] --jobAwsKey=[jobAwsKey] --jobAwsSecret=[jobAwsSecret] --availabilityZone=[availabilityZone] --keep-alive
 
 Where:
     awsKey              - the aws key
     awsSecret           - the aws secret
     jobName             - the name to call the job
+    region-code         - the region code
+    cat-index           - the cat index
     s3Bucket            - the s3 bucket to write results to
-    keypair             - the aws public/private key pair to use 
+    keypair             - the aws public/private key pair to use
     jobAwsKey           - aws key for job to access S3 [optional]
     jobAwsSecret        - aws secret for job to access S3 [optional]
     core-count          - the number of core instances to run [optional]
@@ -39,7 +41,7 @@ if __name__ == '__main__':
     boto_config = BotoConfig()
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:],'', ['awsKey=','awsSecret=','jobAwsKey=','jobAwsSecret=','s3Bucket=','core-count=','spot-count=','spot-bid=','keypair=','jobName=','availabilityZone=','keep-alive'])
+        opts, args = getopt.getopt(sys.argv[1:],'', ['awsKey=','awsSecret=','jobAwsKey=','jobAwsSecret=','s3Bucket=','core-count=','spot-count=','spot-bid=','keypair=','jobName=','region-code=','cat-index=','availabilityZone=','keep-alive'])
     except:
         usage()
 
@@ -52,6 +54,8 @@ if __name__ == '__main__':
               'keypair' : None,
               's3_bucket' : None,
               'job_name' : None,
+              'region_code': None,
+              'cat_index': None,
               'availability_zone' : "us-east-1d",
               'num_core' : 2,
               'num_spot' : 0,
@@ -84,6 +88,10 @@ if __name__ == '__main__':
             params['availability_zone']=a
         elif o in ('--jobName'):
             params['job_name']=a
+        elif o in ('--region-code'):
+            params['region_code']=a
+        elif 0 in ('--cat-index'):
+            params['cat_index']=a
 
     required = ['aws_key', 'secret', 'keypair', 's3_bucket', 'job_name']
 
@@ -143,8 +151,16 @@ if __name__ == '__main__':
         "-Dfs.s3.awsAccessKeyId={0}".format(params['job_aws_key']),
         "-Dfs.s3.awsSecretAccessKey={0}".format(params['job_secret']),
         "s3n://aws-publicdatasets/common-crawl/parse-output/valid_segments.txt",
-        "s3n://{0}/{1}-results/".format(params['s3_bucket'], params['job_name'])
+        "s3n://{0}/{1}-results/".format(params['s3_bucket'], params['job_name']),
     ]
+
+    if params['region_code'] is not None:
+        step_args.append('--region-code')
+        step_args.append(params['region_code'])
+
+    if params['cat_index'] is not None:
+        step_args.append('--cat-index')
+        step_args.append(params['cat_index'])
 
     step = JarStep(name='org.mozilla.up.TitleHarvester',
             jar='s3n://{0}/TitleHarvester.jar'.format(params['s3_bucket']),

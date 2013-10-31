@@ -89,14 +89,14 @@ public class TitleHarvesterMapperGetTitleTest
     @Test
     public void testMapperGetTitleKeywordsNoKeywords() throws Exception
     {
-    	new NonStrictExpectations() {{
+        new NonStrictExpectations() {{
             mockedContext.getCounter(TitleHarvester.PageHTTPStatus.SUCCESS_2XX); result = mockCounter;
             mockedContext.getCounter("DATA_PAGE_TYPE", "undefined"); result = mockCounter;
             mockedContext.getCounter("DATA_PAGE_TYPE", "html-doc"); result = mockCounter;
             mockedContext.getCounter(TitleHarvester.ParseStats.PAGE_NO_KEYWORDS); result = mockCounter;
             mockCounter.increment(anyInt);
         }};
-        
+
         String json = "{\"http_result\":200, \"content\": {\"title\": \"AwesomeTitle\", \"type\": \"html-doc\"}}";
         String[] titleKeywords = (String[]) method.invoke(thm, json, mockedContext);
         assertEquals("AwesomeTitle", titleKeywords[0]);
