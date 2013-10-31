@@ -101,12 +101,12 @@ public class TitleHarvester extends Configured implements Tool
                 ObjectMapper mapper = new ObjectMapper();
                 String filePath = null;
                 String regionCode = context.getConfiguration().get("titleHarvester.regionCode");
-                String catIndex = context.getConfiguration().get("titleHarvester.catIndex");
+                String variation = context.getConfiguration().get("titleHarvester.variation");
 
-                if (null == catIndex || catIndex.isEmpty()) {
+                if (null == variation || variation.isEmpty()) {
                 	filePath = String.format("/data/domain_cat_index/%1$s.json", regionCode);
                 } else {
-                	filePath = String.format("/data/domain_cat_index/%1$s.%2$s.json", regionCode, catIndex);
+                	filePath = String.format("/data/domain_cat_index/%1$s.%2$s.json", regionCode, variation);
                 }
                 domainCategories = mapper.readValue(getClass().getResourceAsStream(filePath), new TypeReference<Map<String, ArrayList<String>>>(){});
             } catch(IOException e)
@@ -451,7 +451,7 @@ public class TitleHarvester extends Configured implements Tool
         if (args.length < 2)
         {
 
-            System.err.printf("Usage: %s [generic options] <segment_file_path> <output_path> [--region-code regionCode]\n", getClass().getSimpleName());
+            System.err.printf("Usage: %s [generic options] <segment_file_path> <output_path> [--region-code regionCode] [--variation variation]\n", getClass().getSimpleName());
 
             ToolRunner.printGenericCommandUsage(System.err);
 
@@ -462,13 +462,13 @@ public class TitleHarvester extends Configured implements Tool
 
         // Get region code and cat index from arguments
         String regionCode = DEFAULT_REGION_CODE;
-        String catIndex = "";
+        String variation = "";
         if (args.length > 2) {
             for (int i = 0; i < args.length; i++) {
                 if ("--region-code".equals(args[i]) && i < args.length - 1) {
                     regionCode = args[i + 1];
-                } else if ("--cat-index".equals(args[i]) && i < args.length -1) {
-                	catIndex = args[i + 1];
+                } else if ("--variation".equals(args[i]) && i < args.length -1) {
+                	variation = args[i + 1];
                 }
             }
         }
@@ -519,9 +519,9 @@ public class TitleHarvester extends Configured implements Tool
 
         Configuration conf = job.getConfiguration();
 
-        // Set regionCode and catIndex for indentifying the categories file we should parse later.
+        // Set regionCode and variation for indentifying the categories file we should parse later.
         conf.set("titleHarvester.regionCode", regionCode);
-        conf.set("titleHarvester.catIndex", catIndex);
+        conf.set("titleHarvester.variation", variation);
 
         // Allows some (50%) of tasks fail; we might encounter the
         // occasional troublesome set of records and skipping a few
