@@ -1,0 +1,9 @@
+[submodule "tree_split"]
+	path = tree_split
+	url = https://github.com/ansjsun/tree_split.git
+[submodule "ansj_seg"]
+	path = ansj_seg
+	url = https://github.com/ansjsun/ansj_seg.git
+[submodule "WekaChineseTokenizer"]
+	path = WekaChineseTokenizer
+	url = https://github.com/PinZhang/WekaChineseTokenizer.git

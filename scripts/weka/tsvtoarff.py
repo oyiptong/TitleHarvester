@@ -29,7 +29,8 @@ line_no = 0
 with bz2file.open(sys.argv[1], 'rb') as tsvfile:
     line_no += 1
     with open(sys.argv[2], 'w') as arfffile:
-        csvwriter = csv.writer(arfffile, quoting=csv.QUOTE_ALL)
+        # escape double quote
+        csvwriter = csv.writer(arfffile, quoting=csv.QUOTE_ALL, doublequote=False, escapechar='\\')
 
         arfffile.write("@relation 40-cat-training\n")
         """
@@ -43,33 +44,34 @@ with bz2file.open(sys.argv[1], 'rb') as tsvfile:
         for line in tsvfile:
             line = line.strip()
             try:
-                url, title, categories = line.split(FIELD_SEP)
+                url, title, keywords, categories = line.split(FIELD_SEP)
             except ValueError, e:
                 print "ERROR at line {0}: {1} ".format(line_no, line)
                 continue
 
-            url = url.lower()
-            title = title.lower()
-
-            url = NOT_WORD.sub(" ", url)
-            title = NOT_WORD.sub(" ", title)
-
-            url = url.split()
-            title = title.split()
-
             out_tokens = []
 
-            for token in url:
-                match = NO_LETTERS.match(token)
-                if (token not in URL_STOPWORDS) and match is None and len(token) > 3:
-                    out_tokens.append(token)
+            def _tokenize(string):
+              for token in NOT_WORD.sub(" ", string.lower()).split():
+                  match = NO_LETTERS.match(token)
+                  if (token not in STOPWORDS) and match is None and len(token) > 3:
+                      out_tokens.append(token)
 
-            for token in title:
-                match = NO_LETTERS.match(token)
-                if (token not in STOPWORDS) and match is None and len(token) > 3:
-                    out_tokens.append(token)
+            _tokenize(url)
 
-            out_str = " ".join(out_tokens)
+            '''
+            For chinese websites, we skip the segmentation which will be
+            performed in the data2vector.sh.
+            '''
+            if len(sys.argv) > 3 and sys.argv[3] == 'zh-CN':
+                out_tokens.append(title)
+                out_tokens.append(keywords)
+            else:
+                _tokenize(title)
+                _tokenize(keywords)
+
+            # filter out all the escape character
+            out_str = " ".join(out_tokens).replace('\\', '')
 
             if out_str == "":
                 continue
