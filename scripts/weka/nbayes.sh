@@ -2,7 +2,12 @@
 
 DATA_DIR=$1
 WORD_NUMS=(1500 3000 5000 7500 10000)
-CLASSPATH=/home/oyiptong/.java/lib/weka.jar
+CLASSPATH=./lib/weka.jar
+
+if [ -n "$CP_NBAYES" ]
+  then
+    CLASSPATH=${CP_NBAYES}
+fi
 
 for NUM_WORDS in ${WORD_NUMS[*]}
 do
